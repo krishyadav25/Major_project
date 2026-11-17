@@ -22,11 +22,11 @@ A bilingual (Hindi, English, Hinglish), voice-enabled Retrieval-Augmented Genera
 
 ## Project Structure
 
-```
+```text
 Major_Project/
 ├── backend/
 │   ├── app/
-│   │   ├── core/            # FastAPI app, router, settings, pipeline orchestrator
+│   │   ├── core/            # FastAPI app, router, settings, logging, schemas
 │   │   ├── ingestion/       # PDF extraction, cleaning, chunking
 │   │   ├── retrieval/       # Hybrid search (BGE-M3 + BM25), targeted retrieval
 │   │   ├── understanding/   # Language detection, intent, query rewriting
@@ -37,8 +37,8 @@ Major_Project/
 │   │   ├── voice/           # ASR (Whisper) and TTS
 │   │   └── evaluation/      # RAGAS, gold set scoring, comparison systems
 │   └── tests/
-│       ├── unit/            # Per-module isolated tests
-│       └── integration/     # Cross-module pipeline tests
+│       ├── unit/            # Per-module isolated tests (e.g. test_health.py)
+│       └── integration/     # Cross-module pipeline tests (e.g. test_app_startup.py)
 ├── frontend/                # React.js / Next.js + TailwindCSS
 ├── data/
 │   ├── raw/                 # Original scheme PDFs
@@ -55,24 +55,77 @@ Major_Project/
 └── README.md
 ```
 
-## Setup
+## Getting Started (Windows)
 
-```bash
-# 1. Clone the repository
+### Prerequisites
+- Windows 10/11
+- Python 3.10+ (Recommended: **Python 3.12.10**)
+- Git
+
+### 1. Clone the Repository
+```powershell
 git clone https://github.com/krishyadav25/Major_project.git
 cd Major_project
+```
 
-# 2. Create a virtual environment
+### 2. Set Up Virtual Environment
+```powershell
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-.venv\Scripts\activate     # Windows
 
-# 3. Install dependencies (when added)
+# Activate on Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Or activate on Windows (Command Prompt)
+.venv\Scripts\activate.bat
+```
+
+### 3. Install Dependencies
+```powershell
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install project dependencies and development tools
 pip install -e ".[dev]"
+```
 
-# 4. Copy and configure environment variables
-cp .env.example .env
-# Edit .env with your settings
+### 4. Configure Environment Variables
+```powershell
+# Copy the example environment template
+Copy-Item .env.example .env
+
+# Edit .env with your local settings (e.g., host, port, Ollama URL)
+```
+
+### 5. Run the FastAPI Backend Server
+```powershell
+# Option A: Run directly with Uvicorn (with live reload)
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Option B: Run via Python module
+python -m app.main
+```
+
+The API will be available at:
+- **Base URL:** http://localhost:8000
+- **Health Check:** http://localhost:8000/health
+
+### 6. Interactive API Documentation (Swagger / OpenAPI)
+Once the server is running, open your browser:
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc UI:** http://localhost:8000/redoc
+- **OpenAPI JSON:** http://localhost:8000/openapi.json
+
+### 7. Run Automated Tests
+```powershell
+# Run the entire test suite
+pytest
+
+# Run tests with detailed verbose output
+pytest -v
+
+# Run with test coverage report
+pytest --cov=app backend/tests
 ```
 
 ## Team
@@ -81,7 +134,7 @@ cp .env.example .env
 - **Pranjal Seluriyal** (500122853)
 - **Isha** (500119683)
 
-**Mentor:** Dr. Mansi Gupta
+**Mentor:** Dr. Mansi Gupta  
 **Institution:** University of Petroleum & Energy Studies, Dehradun
 
 ## License
