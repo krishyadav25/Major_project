@@ -1,0 +1,52 @@
+[project]
+name = "adapted-reasoning-rag"
+version = "0.1.0"
+description = "Bilingual, voice-enabled RAG assistant with claim-level evidence sufficiency checking for Indian government welfare scheme eligibility."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Krish Yadav"},
+    {name = "Pranjal Seluriyal"},
+    {name = "Isha"},
+]
+
+dependencies = [
+    # Dependencies will be added incrementally as modules are built.
+    # Phase 1 (ingestion & retrieval):
+    #   "pymupdf", "chromadb", "sentence-transformers", "rank-bm25"
+    # Phase 2 (reasoning & eligibility):
+    #   "fastapi", "uvicorn", "langchain", "pyyaml"
+    # Phase 3 (voice & frontend):
+    #   "openai-whisper", "TTS"
+    # Phase 4 (evaluation):
+    #   "ragas", "datasets"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "black",
+    "ipykernel",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
