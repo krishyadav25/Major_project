@@ -126,6 +126,55 @@ pytest -v
 
 # Run with test coverage report
 pytest --cov=app backend/tests
+
+# Run only the ingestion pipeline tests
+pytest backend/tests/unit/test_ingestion.py -v
+```
+
+## PDF Ingestion Pipeline
+
+The ingestion pipeline converts government scheme PDFs into indexed, searchable text chunks. It runs in three stages:
+
+```
+PDF file  →  [Extractor]  →  [Cleaner]  →  [Chunker]  →  List[TextChunk]
+```
+
+| Stage | Module | Responsibility |
+|---|---|---|
+| **Extract** | `app/ingestion/extractor.py` | Opens PDF with PyMuPDF, reads page text (1-based numbering), detects scanned PDFs |
+| **Clean** | `app/ingestion/cleaner.py` | NFC Unicode normalization, line ending unification, collapse extra whitespace/blank lines |
+| **Chunk** | `app/ingestion/chunker.py` | Word-boundary splitting with configurable size + overlap; deterministic chunk IDs |
+
+### Supported Input
+- Text-based PDFs in Hindi (Devanagari), English, and Hinglish
+- Multi-page documents (page number preserved per chunk for source citation)
+
+### Current Limitations
+- **Scanned / image-only PDFs are not supported.** If all pages contain no extractable text, `ingest_pdf()` raises a `RuntimeError` and reports the file as requiring OCR. OCR support is planned for a later milestone.
+- Devanagari in programmatically created test PDFs uses PyMuPDF's built-in font (Helvetica), which cannot render Devanagari glyphs. Real government PDFs with embedded Devanagari fonts extract correctly.
+
+### Example Usage
+
+```python
+from pathlib import Path
+from app.ingestion.pipeline import ingest_pdf
+from app.ingestion.chunker import ChunkConfig
+
+# Ingest a PDF with default chunk settings (512 chars, 64 overlap)
+chunks = ingest_pdf(Path("data/raw/pm_kisan.pdf"), scheme_name="PM-Kisan")
+
+# Access individual chunks
+for chunk in chunks:
+    print(f"[Page {chunk.metadata.page_number}] {chunk.text[:120]}…")
+    print(f"  chunk_id : {chunk.metadata.chunk_id}")
+    print(f"  scheme   : {chunk.metadata.scheme_name}")
+
+# Custom chunk size for dense retrieval
+chunks = ingest_pdf(
+    Path("data/raw/pm_kisan.pdf"),
+    scheme_name="PM-Kisan",
+    config=ChunkConfig(chunk_size=256, chunk_overlap=32),
+)
 ```
 
 ## Team

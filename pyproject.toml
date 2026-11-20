@@ -12,20 +12,23 @@ authors = [
 ]
 
 dependencies = [
-    # --- Foundation (Phase 0 — current) ---
+    # --- Foundation (Phase 0) ---
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
 
-    # --- Phase 1 (ingestion & retrieval) — to be added ---
-    #   "pymupdf", "chromadb", "sentence-transformers", "rank-bm25"
-    # --- Phase 2 (reasoning & eligibility) — to be added ---
+    # --- Phase 1: Ingestion (current) ---
+    "pymupdf>=1.24.0",
+
+    # --- Phase 1: Retrieval — to be added ---
+    #   "chromadb", "sentence-transformers", "rank-bm25"
+    # --- Phase 2: Reasoning & Eligibility — to be added ---
     #   "langchain", "pyyaml"
-    # --- Phase 3 (voice & frontend) — to be added ---
+    # --- Phase 3: Voice & Frontend — to be added ---
     #   "openai-whisper", "TTS"
-    # --- Phase 4 (evaluation) — to be added ---
+    # --- Phase 4: Evaluation — to be added ---
     #   "ragas", "datasets"
 ]
 
