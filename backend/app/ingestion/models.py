@@ -4,6 +4,8 @@ These Pydantic models represent the structured output at each stage of
 the pipeline: raw extraction → cleaning → chunking.
 """
 
+import hashlib
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
@@ -26,6 +28,10 @@ class DocumentMetadata(BaseModel):
     scheme_name: str | None = Field(
         default=None,
         description="Name of the government scheme this document describes, if known.",
+    )
+    content_hash: str | None = Field(
+        default=None,
+        description="Deterministic content hash of the source document.",
     )
 
     @field_validator("doc_id")
@@ -97,13 +103,55 @@ class TextChunk(BaseModel):
         return v
 
 
-def make_doc_id(filepath: str | Path) -> str:
-    """Derive a stable document ID from a file path.
+def compute_content_hash(content: bytes | str) -> str:
+    """Compute a deterministic 8-character SHA-256 hash of document content."""
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    return hashlib.sha256(content).hexdigest()[:8]
 
-    Uses the filename stem (without extension) in lower-snake-case.
+
+def make_doc_id(
+    filepath: str | Path,
+    prefix: str | None = None,
+    content_hash: str | None = None,
+) -> str:
+    """Derive a stable, collision-resistant document ID from a file path.
+
+    Sanitizes the filename stem to contain only lowercase alphanumeric
+    characters and single underscores. Punctuation (such as parentheses,
+    brackets, dots, and symbols) is replaced with underscores.
+
+    If an optional content hash is supplied, it is appended to disambiguate
+    different files with identical filenames.
+
+    If an optional prefix (e.g. scheme name) is supplied and not already
+    present in the stem, it is prepended to namespace common filenames like
+    ``guidelines.pdf`` across different schemes.
+
+    Args:
+        filepath: Path to the document or filename string.
+        prefix: Optional namespace prefix (e.g. scheme name).
+        content_hash: Optional content hash (e.g. SHA-256 prefix).
 
     Example:
-        ``PM_Kisan_Guidelines.pdf`` → ``pm_kisan_guidelines``
+        ``PM_Kisan (2024) [v1.0].pdf`` → ``pm_kisan_2024_v1_0``
+        ``guidelines.pdf`` with prefix ``PM-Kisan`` → ``pm_kisan_guidelines``
+        ``guidelines.pdf`` with hash ``e3b0c442`` → ``guidelines_e3b0c442``
     """
     stem = Path(filepath).stem
-    return stem.lower().replace(" ", "_").replace("-", "_")
+    # Replace all non-alphanumeric characters with underscores
+    sanitized = re.sub(r"[^a-zA-Z0-9]+", "_", stem).strip("_").lower()
+    if not sanitized:
+        sanitized = "doc"
+
+    if content_hash and content_hash.strip():
+        sanitized_hash = re.sub(r"[^a-zA-Z0-9]+", "", content_hash)[:8].lower()
+        if sanitized_hash and not sanitized.endswith(sanitized_hash):
+            sanitized = f"{sanitized}_{sanitized_hash}"
+
+    if prefix and prefix.strip():
+        sanitized_prefix = re.sub(r"[^a-zA-Z0-9]+", "_", prefix).strip("_").lower()
+        if sanitized_prefix and not sanitized.startswith(sanitized_prefix):
+            return f"{sanitized_prefix}_{sanitized}"
+
+    return sanitized

@@ -19,11 +19,13 @@ dependencies = [
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
 
-    # --- Phase 1: Ingestion (current) ---
+    # --- Phase 1: Ingestion ---
     "pymupdf>=1.24.0",
 
-    # --- Phase 1: Retrieval — to be added ---
-    #   "chromadb", "sentence-transformers", "rank-bm25"
+    # --- Phase 1: Retrieval ---
+    "rank-bm25>=0.2.2",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
     # --- Phase 2: Reasoning & Eligibility — to be added ---
     #   "langchain", "pyyaml"
     # --- Phase 3: Voice & Frontend — to be added ---

@@ -39,12 +39,33 @@ from app.ingestion.pipeline import ingest_pdf
 # ---------------------------------------------------------------------------
 
 
-def _make_pdf_bytes(pages: list[str]) -> bytes:
+def _find_devanagari_font() -> str | None:
+    """Locate a Devanagari-capable font on the host system.
+
+    Checks standard Windows and Linux font locations.  Returns None if no
+    supported font is available.
+    """
+    candidates = [
+        Path("C:/Windows/Fonts/Nirmala.ttc"),
+        Path("C:/Windows/Fonts/NirmalaB.ttc"),
+        Path("C:/Windows/Fonts/mangal.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansDevanagari-Regular.otf"),
+        Path("/usr/share/fonts/google-noto/NotoSansDevanagari-Regular.ttf"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _make_pdf_bytes(pages: list[str], fontfile: str | None = None) -> bytes:
     """Create a minimal in-memory PDF with one text block per page.
 
     Args:
         pages: List of text strings, one per page.  An empty string
                produces a page with no text (simulates a scanned page).
+        fontfile: Optional path to a font file (e.g. for Devanagari Unicode).
 
     Returns:
         Raw PDF bytes.
@@ -53,17 +74,22 @@ def _make_pdf_bytes(pages: list[str]) -> bytes:
     for text in pages:
         page = doc.new_page()
         if text:
-            page.insert_text((72, 72), text, fontsize=11)
+            if fontfile:
+                page.insert_text((72, 72), text, fontname="deva", fontfile=fontfile, fontsize=11)
+            else:
+                page.insert_text((72, 72), text, fontsize=11)
+    if fontfile:
+        doc.subset_fonts()
     buf = io.BytesIO()
-    doc.save(buf)
+    doc.save(buf, garbage=4, deflate=True)
     doc.close()
     return buf.getvalue()
 
 
-def _write_pdf(tmp_path: Path, name: str, pages: list[str]) -> Path:
+def _write_pdf(tmp_path: Path, name: str, pages: list[str], fontfile: str | None = None) -> Path:
     """Write a programmatically generated PDF to a temp file and return its path."""
     path = tmp_path / name
-    path.write_bytes(_make_pdf_bytes(pages))
+    path.write_bytes(_make_pdf_bytes(pages, fontfile=fontfile))
     return path
 
 
@@ -141,6 +167,25 @@ def test_make_doc_id_with_hyphens() -> None:
     assert make_doc_id("pm-awas-yojana.pdf") == "pm_awas_yojana"
 
 
+def test_make_doc_id_sanitizes_punctuation() -> None:
+    """Special characters, parentheses, brackets and dots are replaced with underscores."""
+    assert make_doc_id("PM_Kisan (2024) [v1.0] @Delhi.pdf") == "pm_kisan_2024_v1_0_delhi"
+    assert make_doc_id("Scheme...Guidelines---final!.pdf") == "scheme_guidelines_final"
+
+
+def test_make_doc_id_collision_resistant_prefix() -> None:
+    """Prefixing namespaces identical filenames across different schemes."""
+    id1 = make_doc_id("guidelines.pdf", prefix="PM-Kisan")
+    id2 = make_doc_id("guidelines.pdf", prefix="Ayushman Bharat")
+    assert id1 == "pm_kisan_guidelines"
+    assert id2 == "ayushman_bharat_guidelines"
+    assert id1 != id2
+
+    # If prefix is already present, it is not redundantly prepended
+    id3 = make_doc_id("pm_kisan_guidelines.pdf", prefix="PM-Kisan")
+    assert id3 == "pm_kisan_guidelines"
+
+
 # ---------------------------------------------------------------------------
 # Tests — PDF extraction
 # ---------------------------------------------------------------------------
@@ -178,59 +223,70 @@ def test_extract_preserves_scheme_name(tmp_path: Path) -> None:
     assert doc.metadata.scheme_name == "Ayushman Bharat"
 
 
-def test_extract_hindi_unicode(tmp_path: Path) -> None:
-    """Verify extractor handles Devanagari pages without crashing or silently dropping pages.
+def test_extract_hindi_unicode_programmatic(tmp_path: Path) -> None:
+    """Devanagari text must survive extraction without corruption when a font is present."""
+    font = _find_devanagari_font()
+    if font is None:
+        pytest.skip("No system Devanagari font found for programmatic test generation.")
 
-    Limitation: PyMuPDF's built-in font (Helvetica) cannot render Devanagari
-    codepoints — it outputs placeholder dots.  Real government PDFs that embed
-    a Devanagari-capable font (e.g. Noto Sans Devanagari) extract correctly.
-    This test verifies the extractor processes the page and does NOT:
-    - crash or raise an exception
-    - silently drop the page from the output
-    - return an empty page when characters are present
-    """
-    hindi = "प्रधानमंत्री किसान सम्मान निधि"
-    path = _write_pdf(tmp_path, "hindi.pdf", [hindi])
+    hindi = "प्रधानमंत्री किसान सम्मान निधि योजना"
+    path = _write_pdf(tmp_path, "hindi.pdf", [hindi], fontfile=font)
     doc = extract_pdf(path)
 
     assert doc.metadata.page_count == 1
     assert len(doc.pages) == 1
-    assert doc.pages[0].page_number == 1
-    # Page is processed — char_count > 0 even though glyphs are placeholder dots.
-    # The extractor must not silently drop pages with Devanagari input.
-    assert doc.pages[0].char_count > 0
+    assert "किसान" in doc.pages[0].raw_text
+    assert "प्रधानमंत्री" in doc.pages[0].raw_text
+
+
+def test_extract_hindi_from_unicode_fixture() -> None:
+    """Verify authentic Devanagari text extraction from redistributable fixture PDF.
+
+    This test uses a pre-generated, font-subsetted PDF fixture with authentic
+    Hindi text, ensuring verification passes on any operating system (including
+    Linux CI containers) without relying on Windows system fonts.
+    """
+    fixture_path = Path(__file__).parent.parent / "fixtures" / "sample_hindi_scheme.pdf"
+    assert fixture_path.exists(), f"Fixture PDF not found at {fixture_path}"
+
+    doc = extract_pdf(fixture_path, scheme_name="PM-Kisan")
+
+    assert doc.metadata.page_count == 1
+    assert len(doc.pages) == 1
+    raw = doc.pages[0].raw_text
+    # Verify exact Devanagari content and numerical values
+    assert "किसान" in raw
+    assert "सम्मान" in raw
+    assert "पात्र" in raw
+    assert "₹6,000" in raw
+    assert "annual" in raw and "benefit" in raw
+
+    # Also verify cleaning normalizes non-breaking spaces and preserves multi-word phrases
+    cleaned = clean_page_text(raw)
+    assert "annual benefit" in cleaned
+    assert "पात्र किसानों को प्रति वर्ष ₹6,000" in cleaned
 
 
 def test_extract_mixed_hindi_english(tmp_path: Path) -> None:
-    """Latin text in mixed-script pages is preserved correctly.
+    """Pages with mixed Hindi and English text are both preserved with true Unicode glyphs."""
+    font = _find_devanagari_font()
+    if font is None:
+        pytest.skip("No system Devanagari font found for programmatic test generation.")
 
-    Limitation: PyMuPDF's built-in font cannot render Devanagari in
-    programmatically created test PDFs.  We therefore test with ASCII-only
-    content here.  Real government PDFs with embedded Devanagari fonts
-    produce correct bilingual output — see test_extract_hindi_unicode for
-    the page-level assertion.
-    """
-    # Use ASCII-only text so the built-in font renders all characters correctly.
-    mixed = "PM Kisan eligibility 2000"
-    path = _write_pdf(tmp_path, "mixed.pdf", [mixed])
+    mixed = "PM Kisan – प्रधानमंत्री किसान सम्मान निधि – eligibility ₹2000"
+    path = _write_pdf(tmp_path, "mixed.pdf", [mixed], fontfile=font)
     doc = extract_pdf(path)
 
     text = doc.pages[0].raw_text
-    assert "PM Kisan" in text
+    assert "PM" in text
+    assert "Kisan" in text
+    assert "किसान" in text
     assert "eligibility" in text
+    assert "₹2000" in text
 
 
 def test_extract_empty_pdf_zero_pages(tmp_path: Path) -> None:
-    """A PDF with zero pages should extract with page_count == 0.
-
-    PyMuPDF 2.x raises ValueError when saving a new document that has zero
-    pages (neither ``.save()`` nor ``.tobytes()`` works on a page-less doc).
-    We therefore use a hand-crafted minimal PDF bytestring — the smallest
-    structurally valid PDF that contains a zero-length page tree.  PyMuPDF
-    can open it, report 0 pages, and return cleanly.
-    """
-    # Minimal syntactically valid PDF with an empty Pages dictionary (0 pages).
-    # This is the smallest PDF structure accepted by most readers.
+    """A PDF with zero pages must be rejected with a clear ValueError."""
     minimal_zero_page_pdf = (
         b"%PDF-1.4\n"
         b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
@@ -245,10 +301,36 @@ def test_extract_empty_pdf_zero_pages(tmp_path: Path) -> None:
     path = tmp_path / "empty.pdf"
     path.write_bytes(minimal_zero_page_pdf)
 
-    doc = extract_pdf(path)
-    assert doc.metadata.page_count == 0
-    assert doc.pages == []
-    assert not doc.metadata.is_scanned  # 0 pages → not classified as scanned
+    with pytest.raises(ValueError, match="contains no pages"):
+        extract_pdf(path)
+
+
+def test_extract_pdf_closes_file_on_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ensure the PyMuPDF document handle is closed even if extraction raises an exception."""
+    path = _write_pdf(tmp_path, "error.pdf", ["Page content"])
+
+    opened_docs: list[pymupdf.Document] = []
+    original_open = pymupdf.open
+
+    def tracking_open(*args, **kwargs):
+        doc = original_open(*args, **kwargs)
+        opened_docs.append(doc)
+        return doc
+
+    monkeypatch.setattr(pymupdf, "open", tracking_open)
+
+    def failing_get_text(*args, **kwargs):
+        raise RuntimeError("Simulated corruption during text read")
+
+    monkeypatch.setattr(pymupdf.Page, "get_text", failing_get_text)
+
+    with pytest.raises(RuntimeError, match="Simulated corruption"):
+        extract_pdf(path)
+
+    assert len(opened_docs) == 1
+    assert opened_docs[0].is_closed
 
 
 def test_extract_scanned_pdf_flagged(tmp_path: Path) -> None:
@@ -487,6 +569,70 @@ def test_chunk_long_paragraph(tmp_path: Path) -> None:
     assert len(chunks) > 2
 
 
+def test_chunk_zero_overlap_no_word_duplication() -> None:
+    """When chunk_overlap = 0, no words should be duplicated between consecutive chunks."""
+    text = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10"
+    doc = _make_doc_direct([text])
+    config = ChunkConfig(chunk_size=25, chunk_overlap=0)
+    chunks = chunk_document(doc, config)
+
+    assert len(chunks) > 1
+    # Check that consecutive chunks have 0 overlapping words
+    for i in range(len(chunks) - 1):
+        words_current = set(chunks[i].text.split())
+        words_next = set(chunks[i + 1].text.split())
+        intersection = words_current & words_next
+        assert not intersection, f"Unexpected word overlap with overlap=0: {intersection}"
+
+    # Also verify that recombined words equal the original words exactly
+    all_chunk_words: list[str] = []
+    for c in chunks:
+        all_chunk_words.extend(c.text.split())
+    assert all_chunk_words == text.split()
+
+
+def test_chunk_preserves_numbered_lists_and_linebreaks() -> None:
+    """Chunker must preserve line breaks in numbered eligibility criteria."""
+    text = (
+        "Eligibility Criteria:\n"
+        "1. Beneficiary must be a small farmer.\n"
+        "2. Landholding must be up to 2.0 hectares.\n"
+        "3. Family income must not exceed 200000 per annum.\n"
+        "4. Institutional landholders are excluded."
+    )
+    doc = _make_doc_direct([text])
+    chunks = chunk_document(doc, ChunkConfig(chunk_size=120, chunk_overlap=20))
+
+    assert len(chunks) >= 2
+    # Verify that multi-line structure is preserved in chunks
+    multi_line_chunks = [c for c in chunks if "\n" in c.text]
+    assert len(multi_line_chunks) > 0, "Expected line breaks to be preserved in chunks"
+    for c in multi_line_chunks:
+        lines = c.text.split("\n")
+        assert len(lines) >= 2
+
+
+def test_chunk_preserves_eligibility_criteria_structure() -> None:
+    """Bullet points and numerical thresholds must retain their structured layout."""
+    text = (
+        "PM-Kisan Scheme Guidelines:\n"
+        "- Small and marginal farmers with cultivable land up to 2 hectares\n"
+        "- Annual income support of ₹6,000 in three equal installments\n"
+        "- Direct Benefit Transfer (DBT) to Aadhaar-linked bank accounts\n"
+        "- Exclusions: Income tax payers, doctors, engineers, lawyers"
+    )
+    doc = _make_doc_direct([text])
+    chunks = chunk_document(doc, ChunkConfig(chunk_size=160, chunk_overlap=30))
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        # Verify bullets and currency symbols are preserved
+        assert "₹" in chunk.text or "hectares" in chunk.text or "Exclusions" in chunk.text
+        if "-" in chunk.text:
+            assert not chunk.text.startswith("\n")
+            assert not chunk.text.endswith("\n")
+
+
 def test_chunk_config_validation() -> None:
     with pytest.raises(ValueError, match="chunk_size must be positive"):
         ChunkConfig(chunk_size=0, chunk_overlap=0)
@@ -530,3 +676,23 @@ def test_ingest_pdf_chunk_indices_contiguous(tmp_path: Path) -> None:
     chunks = ingest_pdf(path, config=ChunkConfig(chunk_size=80, chunk_overlap=10))
     indices = [c.metadata.chunk_index for c in chunks]
     assert indices == list(range(len(chunks)))
+
+
+def test_ingest_pdf_zero_pages_raises(tmp_path: Path) -> None:
+    """ingest_pdf must raise ValueError for zero-page PDFs."""
+    minimal_zero_page_pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
+        b"xref\n0 3\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"0000000058 00000 n \n"
+        b"trailer\n<< /Size 3 /Root 1 0 R >>\n"
+        b"startxref\n110\n%%EOF\n"
+    )
+    path = tmp_path / "empty_ingest.pdf"
+    path.write_bytes(minimal_zero_page_pdf)
+
+    with pytest.raises(ValueError, match="contains no pages"):
+        ingest_pdf(path)

@@ -15,6 +15,7 @@ Design decisions:
 - Empty chunks (after stripping) are discarded.
 """
 
+import re
 from dataclasses import dataclass
 
 from app.ingestion.models import ChunkMetadata, DocumentMetadata, ProcessedDocument, TextChunk
@@ -52,6 +53,9 @@ class ChunkConfig:
 def _chunk_text_into_pieces(text: str, chunk_size: int, overlap: int) -> list[str]:
     """Split a string into overlapping character-capped pieces at word boundaries.
 
+    Preserves original line breaks, numbered lists, bullet points, and paragraph
+    structure while enforcing character limits and word boundaries.
+
     Args:
         text: The cleaned text to split.
         chunk_size: Maximum character length for each piece.
@@ -64,45 +68,50 @@ def _chunk_text_into_pieces(text: str, chunk_size: int, overlap: int) -> list[st
     if not text:
         return []
 
-    words = text.split()
-    if not words:
+    # Tokenize into word + trailing whitespace pairs (e.g. '1. ', 'farmer.\n', 'PM-Kisan ').
+    # This preserves all internal newlines, blank lines, and spacing.
+    tokens = re.findall(r"\S+\s*", text)
+    if not tokens:
         return []
 
     chunks: list[str] = []
-    start = 0  # index into the word list
+    start = 0
 
-    while start < len(words):
-        # Greedily add words until we exceed chunk_size
+    while start < len(tokens):
+        # Greedily add tokens until we exceed chunk_size
         end = start
         current_length = 0
-        while end < len(words):
-            word_len = len(words[end]) + (1 if end > start else 0)  # +1 for space
-            if current_length + word_len > chunk_size and end > start:
+        while end < len(tokens):
+            token_len = len(tokens[end])
+            if current_length + token_len > chunk_size and end > start:
                 break
-            current_length += word_len
+            current_length += token_len
             end += 1
 
-        piece = " ".join(words[start:end])
-        if piece.strip():
+        piece = "".join(tokens[start:end]).strip()
+        if piece:
             chunks.append(piece)
 
-        if end >= len(words):
+        if end >= len(tokens):
             break
 
         # Determine the next start position respecting overlap.
-        # We step back enough words to cover ~overlap characters.
-        overlap_chars = 0
-        step_back = 0
-        for i in range(end - 1, start - 1, -1):
-            overlap_chars += len(words[i]) + 1
-            step_back += 1
-            if overlap_chars >= overlap:
-                break
+        if overlap <= 0:
+            next_start = end
+        else:
+            overlap_chars = 0
+            step_back = 0
+            for i in range(end - 1, start - 1, -1):
+                overlap_chars += len(tokens[i])
+                step_back += 1
+                if overlap_chars >= overlap:
+                    break
 
-        next_start = end - step_back
-        # Safety: always advance at least one word to prevent infinite loops.
-        if next_start <= start:
-            next_start = start + 1
+            next_start = end - step_back
+            # Safety: always advance at least one token to prevent infinite loops.
+            if next_start <= start:
+                next_start = start + 1
+
         start = next_start
 
     return chunks

@@ -35,6 +35,7 @@ def ingest_pdf(
     filepath: str | Path,
     scheme_name: str | None = None,
     config: ChunkConfig | None = None,
+    use_content_hash: bool = False,
 ) -> list[TextChunk]:
     """Extract, clean and chunk a single PDF document.
 
@@ -54,7 +55,7 @@ def ingest_pdf(
 
     Raises:
         FileNotFoundError: When the file does not exist.
-        ValueError: When the path is not a PDF.
+        ValueError: When the path is not a PDF, or contains zero pages.
         RuntimeError: When PyMuPDF cannot open the file, or when the document
             is a scanned-only PDF with no extractable text layer.
     """
@@ -62,7 +63,9 @@ def ingest_pdf(
     logger.info("Ingestion started: '%s'", path.name)
 
     # Stage 1 — Extract
-    document: ProcessedDocument = extract_pdf(path, scheme_name=scheme_name)
+    document: ProcessedDocument = extract_pdf(
+        path, scheme_name=scheme_name, use_content_hash=use_content_hash
+    )
 
     if document.metadata.is_scanned:
         raise RuntimeError(
