@@ -75,3 +75,8 @@ coverage.xml
 # ========================
 *.log
 logs/
+
+# ========================
+# Benchmark Outputs
+# ========================
+scripts/benchmark_results.json
